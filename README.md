@@ -283,4 +283,4 @@ The application handles:
 
 ## License
 
-MIT
+Roystan
