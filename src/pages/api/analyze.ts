@@ -69,6 +69,17 @@ export default async function handler(
     const insights = analyzePage(analysis);
     console.log(`[Analyze] Analysis completed. Page type: ${insights.pageType}`);
 
+    const accessibilityErrors = insights.accessibilityErrors || [];
+    const issues = insights.issues || [];
+    if (accessibilityErrors.length > 0) {
+      const critical = accessibilityErrors.filter((e) => e.severity === 'critical').length;
+      const warnings = accessibilityErrors.filter((e) => e.severity === 'warning').length;
+      console.log(`[Analyze] Accessibility issues: ${critical} critical, ${warnings} warnings`);
+    }
+    if (issues.length > 0) {
+      console.log(`[Analyze] Detailed issues generated: ${issues.length}`);
+    }
+
     const artifacts = generateArtifacts(analysis);
     console.log(
       `[Analyze] Artifacts generated: ${artifacts.testCases.length} test cases, ${artifacts.scenarios.length} scenarios`,
@@ -94,6 +105,8 @@ export default async function handler(
       analysis,
       artifacts,
       exports,
+      accessibilityErrors,
+      issues,
     });
   } catch (error: any) {
     const message = error?.message || 'An unknown error occurred';

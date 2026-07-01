@@ -57,6 +57,17 @@ export default function DownloadPanel({ exports, pageUrl }: DownloadPanelProps) 
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
+      for (const file of exports.html || []) {
+        const blob = new Blob([file.content], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qa-${file.filename.replace('/', '-').replace('reports-', '')}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
       for (const file of exports.playwright) {
         const blob = new Blob([file.content], { type: 'text/javascript' });
         const url = URL.createObjectURL(blob);
@@ -91,7 +102,7 @@ export default function DownloadPanel({ exports, pageUrl }: DownloadPanelProps) 
     });
   }, []);
 
-  const allCount = exports.markdown.length + exports.json.length + exports.playwright.length;
+  const allCount = exports.markdown.length + exports.json.length + (exports.html || []).length + exports.playwright.length;
 
   return (
     <div className="download-panel">
@@ -145,6 +156,21 @@ export default function DownloadPanel({ exports, pageUrl }: DownloadPanelProps) 
           downloading={downloading}
         />
         <DownloadSection
+          title="Word / PDF Reports (HTML)"
+          icon={
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <path d="M12 18v-6" />
+              <path d="M9 15l3 3 3-3" />
+            </svg>
+          }
+          files={exports.html || []}
+          onDownload={downloadFile}
+          downloading={downloading}
+          description="Open in Microsoft Word or export as PDF"
+        />
+        <DownloadSection
           title="Playwright Tests"
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -166,9 +192,10 @@ interface DownloadSectionProps {
   files: { filename: string; content: string }[];
   onDownload: (filename: string, content: string, category: string) => void;
   downloading: string | null;
+  description?: string;
 }
 
-function DownloadSection({ title, icon, files, onDownload, downloading }: DownloadSectionProps) {
+function DownloadSection({ title, icon, files, onDownload, downloading, description }: DownloadSectionProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -180,6 +207,7 @@ function DownloadSection({ title, icon, files, onDownload, downloading }: Downlo
       >
         {icon}
         <span>{title} ({files.length})</span>
+        {description && <span className="download-section-desc">{description}</span>}
         <svg
           width="14"
           height="14"
@@ -219,6 +247,7 @@ function DownloadSection({ title, icon, files, onDownload, downloading }: Downlo
 function getMimeType(filename: string): string {
   if (filename.endsWith('.md')) return 'text/markdown';
   if (filename.endsWith('.json')) return 'application/json';
+  if (filename.endsWith('.html') || filename.endsWith('.htm')) return 'text/html';
   if (filename.endsWith('.js') || filename.endsWith('.mjs')) return 'text/javascript';
   return 'text/plain';
 }

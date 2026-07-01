@@ -2,41 +2,45 @@
 
 A production-ready QA web application that accepts a valid webpage URL and automatically generates comprehensive test artifacts: test cases, test scenarios, test plans, Requirements Traceability Matrix (RTM), and executable Playwright JavaScript test scripts.
 
+Available as a **web app** (Next.js) or **standalone desktop app** (Electron wrapper). The desktop version auto-starts the server and launches a native window — zero configuration required.
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Next.js Application                    │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │                   Frontend (React)                    │ │
-│  │  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  │ │
-│  │  │ UrlInput │→│ LoadingOverlay│→│ ResultsDashboard│  │ │
-│  │  └──────────┘  └──────────────┘  └───────┬───────┘  │ │
-│  │                                           │          │ │
-│  │  ┌────────────────────────────────────────┘          │ │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐          │ │
-│  │  │  │Test Cases│ │Scenarios │ │Test Plan │          │ │
-│  │  │  ├──────────┤ ├──────────┤ ├──────────┤          │ │
-│  │  │  │   RTM    │ │Playwright│ │Download  │          │ │
-│  │  │  └──────────┘ └──────────┘ └──────────┘          │ │
-│  └─────────────────────────────────────────────────────┘ │
-│                          │ API                            │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │              API Route (pages/api/analyze.ts)         │ │
-│  └──────────────────────┬──────────────────────────────┘ │
-│                         │                                │
-│  ┌──────────────────────▼──────────────────────────────┐ │
-│  │                  Core Library (lib/)                  │ │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐     │ │
-│  │  │ Crawler  │→│ Analyzer │→│ Artifact Generator│     │ │
-│  │  └──────────┘ └──────────┘ └────────┬─────────┘     │ │
-│  │                                     │                │ │
-│  │  ┌──────────────────────────────────┘                │ │
-│  │  │  ┌──────────────────┐ ┌──────────────────┐        │ │
-│  │  │  │Playwright Gen     │ │ Export Pipeline    │        │ │
-│  │  │  └──────────────────┘ └──────────────────┘        │ │
-│  └─────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────────────────────────────────┐   │
+│ │                    Electron Shell (electron/main.js)        │   │
+│ │  ┌──────────────────────────────────────────────────────┐  │   │
+│ │  │                 Next.js Application                   │  │   │
+│ │  │  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  │  │   │
+│ │  │  │ UrlInput │→│ LoadingOverlay│→│ ResultsDashboard│  │  │   │
+│ │  │  └──────────┘  └──────────────┘  └───────┬───────┘  │  │   │
+│ │  │                                           │          │  │   │
+│ │  │  ┌────────────────────────────────────────┘          │  │   │
+│ │  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐          │  │   │
+│ │  │  │  │Test Cases│ │Scenarios │ │Test Plan │          │  │   │
+│ │  │  │  ├──────────┤ ├──────────┤ ├──────────┤          │  │   │
+│ │  │  │  │   RTM    │ │Playwright│ │Download  │          │  │   │
+│ │  │  │  └──────────┘ └──────────┘ └──────────┘          │  │   │
+│ │  └───────────────────┬──────────────────────────────────┘  │   │
+│ │                      │ API                                 │   │
+│ │  ┌───────────────────▼──────────────────────────────────┐  │   │
+│ │  │           API Route (pages/api/analyze.ts)            │  │   │
+│ │  └───────────────────┬──────────────────────────────────┘  │   │
+│ │                      │                                     │   │
+│ │  ┌───────────────────▼──────────────────────────────────┐  │   │
+│ │  │               Core Library (lib/)                     │  │   │
+│ │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐     │  │   │
+│ │  │  │ Crawler  │→│ Analyzer │→│ Artifact Generator│     │  │   │
+│ │  │  └──────────┘ └──────────┘ └────────┬─────────┘     │  │   │
+│ │  │                                     │                │  │   │
+│ │  │  ┌──────────────────────────────────┘                │  │   │
+│ │  │  │  ┌──────────────────┐ ┌──────────────────┐        │  │   │
+│ │  │  │  │Playwright Gen    │ │Export Pipeline   │        │  │   │
+│ │  │  │  └──────────────────┘ └──────────────────┘        │  │   │
+│ │  └──────────────────────────────────────────────────────┘  │   │
+│ └────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
@@ -49,6 +53,9 @@ qa-web-analyzer/
 ├── jest.config.js            # Test configuration
 ├── .gitignore
 ├── README.md
+├── electron/
+│   ├── main.js                # Desktop shell: auto-starts server + launches native window
+│   └── preload.js             # Secure context bridge
 ├── src/
 │   ├── pages/
 │   │   ├── index.tsx          # Main page (URL input + results)
@@ -135,16 +142,59 @@ qa-web-analyzer/
 cd qa-web-analyzer
 
 # Install dependencies
-npm install
+npm install --ignore-scripts
 
-# Install Playwright browsers (for running generated tests)
+# Install Playwright browsers (for running generated tests, optional)
 npx playwright install chromium
+```
 
-# Start the development server
+### Option A: Web App (Browser)
+
+```bash
 npm run dev
 ```
 
 The app will be available at **http://localhost:3000**
+
+### Option B: Desktop App (Electron) — One Command
+
+```bash
+npm run electron
+```
+
+That's it. No separate server start, no browser tab to open. This single command does everything automatically:
+
+| Step | What happens |
+|------|-------------|
+| 1 | Starts the Next.js development server on **port 3177** |
+| 2 | Polls the server every second until it responds |
+| 3 | Opens a native **1400x900** desktop window (dark theme) |
+| 4 | Shows a **native error dialog** if anything fails |
+| 5 | On exit, **kills the server process** automatically |
+
+Key details:
+- The terminal stays visible for live logs from both Electron and Next.js
+- External links (in results, etc.) open in your **system browser**, not the Electron window
+- The app window has **no address bar or browser chrome** — pure app experience
+- Press `Ctrl+C` or close the window to stop everything
+- The server always runs on port 3177 so it won't conflict with other projects on port 3000
+
+> **Tip**: Run with `--devtools` to open Chrome DevTools automatically: `npm run electron -- --devtools`
+
+#### Packaging as Installable Desktop App
+
+To create a standalone installer you can distribute or run without the terminal:
+
+```bash
+npm run electron:build
+```
+
+This produces a portable executable in the `dist/` folder:
+- **Windows**: `QA Web Analyzer.exe` (portable, no install needed)
+- **macOS**: `QA Web Analyzer.dmg`
+- **Linux**: `QA Web Analyzer.AppImage`
+
+The packaged app runs Next.js in production mode (`next start`) for faster load times.
 
 ### Usage
 
@@ -256,8 +306,9 @@ Analyzes a webpage URL and generates QA artifacts.
 
 ## Tech Stack
 
+- **Desktop Shell**: Electron 33 (auto-starts server, native window)
 - **Frontend**: Next.js 14, React 18, TypeScript
-- **Crawling**: node-fetch + cheerio (DOM parsing)
+- **Crawling**: Native fetch + cheerio (DOM parsing)
 - **Test Generation**: Custom artifact generator
 - **Test Automation**: Playwright (generated scripts)
 - **Export**: Markdown, JSON, JavaScript

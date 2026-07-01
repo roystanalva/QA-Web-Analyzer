@@ -15,9 +15,18 @@ function nextId(prefix: string): string {
   return `${prefix}_${String(caseCounter).padStart(4, '0')}`;
 }
 
+function randomFrom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function generateSessionNonce(): string {
+  return Math.random().toString(36).substring(2, 8) + Date.now().toString(36);
+}
+
 export function generateArtifacts(analysis: PageAnalysisResult) {
   caseCounter = 0;
   const insights = analyzePage(analysis);
+  const sessionNonce = generateSessionNonce();
 
   const testCases: TestCase[] = [
     ...generateFunctionalTests(analysis, insights),
@@ -32,6 +41,13 @@ export function generateArtifacts(analysis: PageAnalysisResult) {
     ...generateUiTests(analysis, insights),
     ...generateApiTests(analysis, insights),
     ...generateUatTests(analysis, insights),
+    ...generateLinkIntegrityTests(analysis, insights),
+    ...generateImageIntegrityTests(analysis, insights),
+    ...generateSiteSpecificTests(analysis, insights),
+    ...generateEdgeCaseTests(analysis, insights, sessionNonce),
+    ...generateCrossBrowserTests(analysis, insights),
+    ...generateCrossDeviceTests(analysis, insights),
+    ...generateResolutionTests(analysis, insights),
   ];
 
   const scenarios = generateScenarios(testCases, analysis, insights);
@@ -218,7 +234,7 @@ function generateFunctionalTests(
     }
   }
 
-  for (const link of analysis.links.filter((l) => l.type === 'internal').slice(0, 5)) {
+  for (const link of analysis.links.filter((l) => l.type === 'internal')) {
     tests.push({
       id: nextId('TC-FUNC'),
       type: 'functional',
@@ -243,6 +259,34 @@ function generateFunctionalTests(
       priority: 'high',
       severity: 'critical',
       tags: ['functional', 'smoke', 'regression'],
+      estimatedDuration: '2 min',
+    });
+  }
+
+  for (const link of analysis.links.filter((l) => l.type === 'external').slice(0, 20)) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `External link - "${link.text}" is accessible`,
+      description: `Verify that the external link "${link.text}" pointing to ${link.href} is reachable and loads correctly.`,
+      preconditions: ['Page is fully loaded', 'External network access is available'],
+      testData: `External URL: ${link.href}`,
+      steps: [
+        `Navigate to ${url}`,
+        `Locate the "${link.text}" link`,
+        'Right-click and copy the link URL',
+        `Navigate to ${link.href} directly`,
+        'Verify the page loads successfully',
+      ],
+      expectedResults: [
+        'External URL is reachable (HTTP 200)',
+        'Destination page loads without errors',
+        'No broken redirects',
+        'Content is relevant to link text',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['functional', 'regression'],
       estimatedDuration: '2 min',
     });
   }
@@ -1856,6 +1900,1671 @@ function generateUatTests(
     tags: ['uat', 'functional'],
     estimatedDuration: '3 min',
   });
+
+  return tests;
+}
+
+function generateLinkIntegrityTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+  const allLinks = analysis.links;
+  const internalLinks = allLinks.filter((l) => l.type === 'internal');
+  const externalLinks = allLinks.filter((l) => l.type === 'external');
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: `Link integrity - All ${internalLinks.length} internal links return valid responses`,
+    description: `Systematically verify every internal link (${internalLinks.length} found) returns HTTP 200 and loads correctly.`,
+    preconditions: ['Page is fully loaded', 'All internal pages are accessible'],
+    testData: `Total internal links: ${internalLinks.length}\nLinks: ${internalLinks.map((l) => l.href).join(', ')}`,
+    steps: [
+      `Navigate to ${url}`,
+      'Collect all internal links from the page',
+      `For each of the ${internalLinks.length} internal links:`,
+      '  - Send HTTP HEAD or GET request',
+      '  - Verify HTTP status is 200',
+      '  - Check response Content-Type is HTML',
+      '  - Log any redirects (301, 302)',
+      'Compile list of broken links (4xx, 5xx)',
+    ],
+    expectedResults: [
+      `All ${internalLinks.length} internal links return HTTP 200 OK`,
+      'No broken links (4xx or 5xx responses)',
+      'Redirect chains are minimal (max 2 hops)',
+      'All linked pages load complete HTML content',
+      'No dangling or orphaned links',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['functional', 'regression', 'smoke'],
+    estimatedDuration: `${Math.max(3, Math.ceil(internalLinks.length * 0.5))} min`,
+  });
+
+  if (externalLinks.length > 0) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Link integrity - All ${externalLinks.length} external links are reachable`,
+      description: `Verify all ${externalLinks.length} external links are accessible and return valid responses.`,
+      preconditions: ['Page is fully loaded', 'External network access is available'],
+      testData: `Total external links: ${externalLinks.length}\nLinks: ${externalLinks.map((l) => l.href).join(', ')}`,
+      steps: [
+        `Navigate to ${url}`,
+        'Collect all external links from the page',
+        `For each of the ${externalLinks.length} external links:`,
+        '  - Send HTTP HEAD request with timeout',
+        '  - Verify HTTP status is 200 or 3xx (redirect)',
+        '  - Check for SSL certificate validity',
+        '  - Log any unreachable or broken links',
+      ],
+      expectedResults: [
+        `All ${externalLinks.length} external links are reachable`,
+        'No dead external links (4xx, 5xx)',
+        'SSL certificates on external sites are valid',
+        'External redirects are recorded',
+      ],
+      priority: 'high',
+      severity: 'major',
+      tags: ['functional', 'regression'],
+      estimatedDuration: `${Math.max(3, Math.ceil(externalLinks.length * 0.5))} min`,
+    });
+  }
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: 'Link integrity - Anchor links point to valid page sections',
+    description: 'Verify all anchor/hash links (#section) point to existing elements on the page.',
+    preconditions: ['Page is fully loaded'],
+    testData: `Anchor links: ${allLinks.filter((l) => l.type === 'anchor').length}`,
+    steps: [
+      `Navigate to ${url}`,
+      'Collect all anchor links (href starting with #)',
+      'For each anchor link, verify the target element exists in the DOM',
+      'Click each anchor link and verify it scrolls to the correct section',
+      'Check that anchor IDs are unique',
+    ],
+    expectedResults: [
+      'All anchor links target existing DOM elements',
+      'Clicking anchor links scrolls to the correct section',
+      'No broken anchor links (target element missing)',
+      'Anchor IDs are unique and non-duplicated',
+    ],
+    priority: 'medium',
+    severity: 'major',
+    tags: ['functional', 'regression'],
+    estimatedDuration: '2 min',
+  });
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: 'Link integrity - No duplicate anchor IDs on page',
+    description: 'Verify there are no duplicate id attributes that could cause navigation conflicts.',
+    preconditions: ['Page is fully loaded'],
+    testData: 'All element IDs on the page',
+    steps: [
+      `Navigate to ${url}`,
+      'Extract all elements with id attributes',
+      'Check for duplicate IDs',
+      'Verify each ID is unique',
+      'Document any duplicates found',
+    ],
+    expectedResults: [
+      'All element IDs are unique',
+      'No duplicate anchor targets',
+      'No JavaScript errors from duplicate IDs',
+    ],
+    priority: 'medium',
+    severity: 'major',
+    tags: ['functional', 'regression'],
+    estimatedDuration: '1 min',
+  });
+
+  return tests;
+}
+
+function generateImageIntegrityTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+  const images = analysis.images;
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: `Image integrity - All ${images.length} images load correctly`,
+    description: `Verify every image (${images.length} found) on the page loads without errors (no broken image icons).`,
+    preconditions: ['Page is fully loaded', 'Image URLs are accessible'],
+    testData: `Total images: ${images.length}\nImages: ${images.slice(0, 10).map((i) => i.src).join(', ')}${images.length > 10 ? '...' : ''}`,
+    steps: [
+      `Navigate to ${url}`,
+      'Collect all <img> elements on the page',
+      `For each of the ${images.length} images:`,
+      '  - Verify the image src URL is valid',
+      '  - Send HTTP HEAD request to verify accessibility',
+      '  - Check HTTP status is 200',
+      '  - Verify Content-Type is image/*',
+      '  - Check image dimensions are not zero',
+      '  - Verify no broken image placeholder is shown',
+    ],
+    expectedResults: [
+      `All ${images.length} images load successfully (HTTP 200)`,
+      'No broken image icons or placeholders',
+      'All image URLs are valid and accessible',
+      'Image Content-Type headers are correct',
+      'No zero-dimension or invisible images',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['functional', 'regression', 'smoke'],
+    estimatedDuration: `${Math.max(3, Math.ceil(images.length * 0.3))} min`,
+  });
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: 'Image integrity - Images have proper alt text',
+    description: 'Verify all images have descriptive alt text for accessibility and broken-image fallback.',
+    preconditions: ['Page is fully loaded'],
+    testData: `Images with alt: ${images.filter((i) => i.hasAlt && i.alt !== '').length}/${images.length}\nImages without alt: ${images.filter((i) => !i.hasAlt).length}\nDecorative images (alt=""): ${images.filter((i) => i.isDecorative).length}`,
+    steps: [
+      `Navigate to ${url}`,
+      'For each <img> element, inspect the alt attribute',
+      'Verify alt text is descriptive (not empty for informative images)',
+      'Verify decorative images use alt=""',
+      'Check alt text is not just the filename',
+      'Verify alt text is concise (under 125 characters)',
+    ],
+    expectedResults: [
+      'All informative images have descriptive alt text',
+      'Decorative images have empty alt (alt="")',
+      'No images use filenames as alt text',
+      'Alt text is under 125 characters',
+      'Alt text accurately describes image content',
+    ],
+    priority: 'high',
+    severity: 'major',
+    tags: ['accessibility', 'functional', 'regression'],
+    estimatedDuration: '3 min',
+  });
+
+  if (images.some((i) => i.width && i.height)) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: 'Image integrity - Images have explicit dimensions',
+      description: 'Verify all images have width/height attributes to prevent layout shift (CLS).',
+      preconditions: ['Page is fully loaded'],
+      testData: `Images with dimensions: ${images.filter((i) => i.width && i.height).length}/${images.length}`,
+      steps: [
+        `Navigate to ${url}`,
+        'For each <img> element, check for width and height attributes',
+        'Verify dimensions are set before image loads',
+        'Check for explicit CSS dimensions as fallback',
+        'Measure Cumulative Layout Shift (CLS)',
+      ],
+      expectedResults: [
+        'All images have explicit width and height attributes',
+        'No layout shift caused by image loading',
+        'CLS score is below 0.1 (good)',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['performance', 'ui'],
+      estimatedDuration: '2 min',
+    });
+  }
+
+  if (images.length > 5) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: 'Image integrity - Images use modern formats and lazy loading',
+      description: 'Verify images use modern formats (WebP/AVIF) and lazy loading for below-fold images.',
+      preconditions: ['Page is fully loaded'],
+      testData: `Total images: ${images.length}`,
+      steps: [
+        `Navigate to ${url}`,
+        'Check image file extensions for modern formats (WebP, AVIF)',
+        'Check for <img loading="lazy"> on below-fold images',
+        'Verify images use srcset for responsive sizing',
+        'Check for <picture> elements for art direction',
+      ],
+      expectedResults: [
+        'Images use modern compressible formats where supported',
+        'Below-fold images use loading="lazy"',
+        'Responsive images use srcset',
+        'No unnecessarily large image files',
+      ],
+      priority: 'medium',
+      severity: 'minor',
+      tags: ['performance', 'ui'],
+      estimatedDuration: '2 min',
+    });
+  }
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: 'Image integrity - No mixed content images',
+    description: 'Verify all images are loaded over HTTPS when the page is served over HTTPS.',
+    preconditions: ['Page is loaded over HTTPS'],
+    testData: `Page URL: ${url}`,
+    steps: [
+      `Navigate to ${url}`,
+      'Check all <img> src attributes for http:// URLs',
+      'Verify all image URLs use HTTPS or protocol-relative',
+      'Check for mixed content warnings in console',
+      'Verify no images are blocked by mixed content policy',
+    ],
+    expectedResults: [
+      'All image URLs use HTTPS',
+      'No mixed content warnings',
+      'No images blocked by browser security',
+    ],
+    priority: 'high',
+    severity: 'major',
+    tags: ['security', 'functional'],
+    estimatedDuration: '1 min',
+  });
+
+  return tests;
+}
+
+function generateSiteSpecificTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+
+  if (analysis.forms.length > 0) {
+    for (let i = 0; i < analysis.forms.length; i++) {
+      const form = analysis.forms[i];
+      const formLabel = form.id || form.name || `form-${i + 1}`;
+
+      tests.push({
+        id: nextId('TC-FUNC'),
+        type: 'functional',
+        title: `Form behavior - ${formLabel} (${form.method}) to ${form.action}`,
+        description: `Verify form "${formLabel}" submits correctly via ${form.method} method to ${form.action}.`,
+        preconditions: ['Form is visible and loaded'],
+        testData: `Form action: ${form.action}\nMethod: ${form.method}\nFields: ${form.fields.length}`,
+        steps: [
+          `Navigate to ${url}`,
+          `Locate form: ${formLabel}`,
+          `Verify form action is: ${form.action}`,
+          `Verify form method is: ${form.method}`,
+          'Fill in all fields with valid test data',
+          `Click "${form.submitButtonText}" button`,
+          'Verify submission completes successfully',
+        ],
+        expectedResults: [
+          `Form submits to ${form.action} via ${form.method}`,
+          'All required fields are validated',
+          'Form data is transmitted correctly',
+          'Success/confirmation response is received',
+        ],
+        priority: 'high',
+        severity: 'critical',
+        tags: ['functional', 'regression'],
+        estimatedDuration: '3 min',
+      });
+
+      if (form.fields.some((f) => f.type === 'email')) {
+        tests.push({
+          id: nextId('TC-FUNC'),
+          type: 'functional',
+          title: `Form validation - Email field format validation (${formLabel})`,
+          description: `Verify email fields in form "${formLabel}" properly validate email format.`,
+          preconditions: ['Form is visible'],
+          testData: 'Valid: test@example.com\nInvalid: not-an-email, @missing.com, test@.com',
+          steps: [
+            `Navigate to ${url}`,
+            `Locate form: ${formLabel}`,
+            'Enter invalid email formats in email fields',
+            'Submit the form',
+            'Verify validation error for invalid emails',
+            'Enter valid email format',
+            'Verify form accepts valid email',
+          ],
+          expectedResults: [
+            'Invalid email formats are rejected',
+            'Clear error message for invalid email',
+            'Valid email format is accepted',
+            'Email field has proper input type="email"',
+          ],
+          priority: 'high',
+          severity: 'major',
+          tags: ['functional', 'regression'],
+          estimatedDuration: '2 min',
+        });
+      }
+
+      if (form.fields.some((f) => f.type === 'password')) {
+        tests.push({
+          id: nextId('TC-FUNC'),
+          type: 'functional',
+          title: `Form behavior - Password field masking and security (${formLabel})`,
+          description: `Verify password fields in form "${formLabel}" properly mask input and handle security.`,
+          preconditions: ['Form is visible'],
+          testData: 'Password: TestPass123!',
+          steps: [
+            `Navigate to ${url}`,
+            `Locate form: ${formLabel}`,
+            'Type in password field',
+            'Verify input is masked (dots/asterisks)',
+            'Check browser password manager does not interfere',
+            'Verify autocomplete attribute is set appropriately',
+          ],
+          expectedResults: [
+            'Password input is masked (not visible)',
+            'Password field has type="password"',
+            'No password visible in page source',
+            'Autocomplete attribute is set (if applicable)',
+          ],
+          priority: 'high',
+          severity: 'critical',
+          tags: ['security', 'functional'],
+          estimatedDuration: '2 min',
+        });
+      }
+
+      if (form.fields.some((f) => f.type === 'tel')) {
+        tests.push({
+          id: nextId('TC-FUNC'),
+          type: 'functional',
+          title: `Form validation - Phone number field validation (${formLabel})`,
+          description: `Verify phone fields in form "${formLabel}" validate phone number format.`,
+          preconditions: ['Form is visible'],
+          testData: 'Valid: +1234567890, (555) 123-4567\nInvalid: abc, 123',
+          steps: [
+            `Navigate to ${url}`,
+            `Locate form: ${formLabel}`,
+            'Enter invalid phone formats',
+            'Submit the form',
+            'Verify validation for phone fields',
+            'Enter valid phone format',
+          ],
+          expectedResults: [
+            'Phone field uses type="tel"',
+            'Invalid phone formats are handled',
+            'Phone validation rules are enforced',
+          ],
+          priority: 'medium',
+          severity: 'major',
+          tags: ['functional'],
+          estimatedDuration: '2 min',
+        });
+      }
+    }
+  }
+
+  if (analysis.tables.length > 0) {
+    for (let i = 0; i < Math.min(analysis.tables.length, 3); i++) {
+      const table = analysis.tables[i];
+      tests.push({
+        id: nextId('TC-FUNC'),
+        type: 'functional',
+        title: `Table data - Table ${i + 1} (${table.headers.join(', ').substring(0, 50)}) rendering and data integrity`,
+        description: `Verify table ${i + 1} renders correctly with ${table.rowCount} rows and ${table.columnCount} columns.`,
+        preconditions: ['Page is fully loaded', 'Table is visible'],
+        testData: `Headers: ${table.headers.join(', ')}\nRows: ${table.rowCount}\nColumns: ${table.columnCount}\nCaption: ${table.caption || 'None'}`,
+        steps: [
+          `Navigate to ${url}`,
+          `Locate table ${i + 1}`,
+          'Verify table headers are rendered correctly',
+          `Verify table has ${table.rowCount} data rows`,
+          `Verify table has ${table.columnCount} columns`,
+          'Check data alignment in cells',
+          'Verify table is scrollable on narrow viewports',
+        ],
+        expectedResults: [
+          'Table headers are displayed correctly',
+          `Table has ${table.rowCount} rows of data`,
+          'Data is properly aligned in cells',
+          'Table is responsive on mobile viewports',
+          'Screen reader can navigate table structure',
+        ],
+        priority: 'medium',
+        severity: 'major',
+        tags: ['functional', 'ui', 'accessibility'],
+        estimatedDuration: '2 min',
+      });
+    }
+  }
+
+  if (analysis.navElements.length > 0) {
+    for (const nav of analysis.navElements) {
+      tests.push({
+        id: nextId('TC-FUNC'),
+        type: 'functional',
+        title: `Navigation - "${nav.label}" nav with ${nav.items} items is functional`,
+        description: `Verify the "${nav.label}" navigation element has ${nav.items} working links.`,
+        preconditions: ['Page is fully loaded', 'Navigation is visible'],
+        testData: `Nav label: ${nav.label}\nItems: ${nav.items}`,
+        steps: [
+          `Navigate to ${url}`,
+          `Locate navigation: "${nav.label}"`,
+          'Verify all navigation links are visible',
+          'Verify all navigation links are clickable',
+          'Test each link navigates to correct destination',
+          'Verify back button returns to page',
+        ],
+        expectedResults: [
+          'All navigation links are visible and accessible',
+          'All links navigate to correct destinations',
+          'Navigation is keyboard accessible',
+          'Back button works correctly',
+        ],
+        priority: 'high',
+        severity: 'major',
+        tags: ['functional', 'ui', 'accessibility'],
+        estimatedDuration: '3 min',
+      });
+    }
+  }
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'functional',
+    title: `Page metadata - Title and description accuracy`,
+    description: `Verify page title "${analysis.metadata.title}" accurately represents page content.`,
+    preconditions: ['Page is fully loaded'],
+    testData: `Title: ${analysis.metadata.title}\nDescription: ${analysis.metadata.description}`,
+    steps: [
+      `Navigate to ${url}`,
+      'Verify page title matches the <title> tag',
+      'Verify meta description matches visible content',
+      'Check title is not empty',
+      'Check title is under 60 characters',
+      'Check description is under 160 characters',
+    ],
+    expectedResults: [
+      'Page title is accurate and descriptive',
+      'Title is under 60 characters for SEO',
+      'Meta description is under 160 characters',
+      'Title and description match page content',
+    ],
+    priority: 'medium',
+    severity: 'major',
+    tags: ['compliance', 'seo'],
+    estimatedDuration: '1 min',
+  });
+
+  if (analysis.metadata.canonicalUrl) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: 'Canonical URL - Points to correct page',
+      description: `Verify canonical URL ${analysis.metadata.canonicalUrl} points to the correct page.`,
+      preconditions: ['Page is fully loaded'],
+      testData: `Canonical URL: ${analysis.metadata.canonicalUrl}`,
+      steps: [
+        `Navigate to ${url}`,
+        'Inspect <link rel="canonical"> tag',
+        'Verify canonical URL is accessible',
+        'Verify canonical URL matches page URL',
+        'Check for canonical URL conflicts',
+      ],
+      expectedResults: [
+        'Canonical URL is valid and accessible',
+        'Canonical URL matches or is appropriate for the page',
+        'No conflicting canonical tags',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['compliance', 'seo'],
+      estimatedDuration: '1 min',
+    });
+  }
+
+  return tests;
+}
+
+function generateEdgeCaseTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+  sessionNonce: string,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'ad-hoc',
+    title: `Edge case - Rapid consecutive page reloads (session: ${sessionNonce.substring(0, 4)})`,
+    description: 'Verify page stability under rapid consecutive reload actions.',
+    preconditions: ['Page is loaded'],
+    testData: `Session: ${sessionNonce}\nReload count: 10`,
+    steps: [
+      `Navigate to ${url}`,
+      'Press F5 rapidly 10 times in succession',
+      'Wait for final load to complete',
+      'Verify page renders correctly',
+      'Check for any JavaScript errors',
+      'Verify no duplicate form submissions',
+    ],
+    expectedResults: [
+      'Page loads correctly after each reload',
+      'No JavaScript errors or exceptions',
+      'No duplicate requests or submissions',
+      'Page state is clean after rapid reloads',
+    ],
+    priority: 'low',
+    severity: 'minor',
+    tags: ['ad-hoc', 'edge-case'],
+    estimatedDuration: '2 min',
+  });
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'ad-hoc',
+    title: 'Edge case - Browser back/forward button after form interaction',
+    description: 'Verify browser history navigation works correctly after form interactions.',
+    preconditions: ['Page is loaded', 'Forms exist on page'],
+    testData: 'N/A',
+    steps: [
+      `Navigate to ${url}`,
+      'Fill in form fields partially',
+      'Click a link to navigate away',
+      'Press browser back button',
+      'Verify form state is preserved or correctly reset',
+      'Press forward button',
+      'Verify forward navigation works',
+    ],
+    expectedResults: [
+      'Back navigation returns to the page',
+      'Form state is handled correctly (preserved or reset)',
+      'No data loss or corruption',
+      'Forward navigation works correctly',
+    ],
+    priority: 'low',
+    severity: 'minor',
+    tags: ['ad-hoc', 'edge-case', 'ui'],
+    estimatedDuration: '2 min',
+  });
+
+  tests.push({
+    id: nextId('TC-SEC'),
+    type: 'security',
+    title: 'Edge case - URL parameter injection and manipulation',
+    description: 'Test page behavior when malicious or unexpected URL parameters are added.',
+    preconditions: ['Page is loaded'],
+    testData: `Base URL: ${url}\nTest params: ?id=1 OR 1=1, ?search=<script>alert(1)</script>, ?redirect=javascript:alert(1)`,
+    steps: [
+      `Navigate to ${url}?id=1%20OR%201%3D1`,
+      'Verify no SQL injection occurs',
+      `Navigate to ${url}?search=<script>alert(1)</script>`,
+      'Verify XSS is prevented',
+      `Navigate to ${url}?redirect=javascript:alert(1)`,
+      'Verify URL redirect injection is blocked',
+      'Check page handles malformed parameters gracefully',
+    ],
+    expectedResults: [
+      'SQL injection attempts are safely handled',
+      'XSS payloads are sanitized',
+      'URL redirect injection is prevented',
+      'Page handles malformed parameters gracefully',
+      'No application errors or crashes',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['security', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-SEC'),
+    type: 'security',
+    title: 'Edge case - HTTP method tampering (PUT, DELETE, PATCH)',
+    description: 'Verify the page only accepts expected HTTP methods.',
+    preconditions: ['API testing tools available'],
+    testData: `Target URL: ${url}\nMethods: PUT, DELETE, PATCH, OPTIONS, TRACE`,
+    steps: [
+      `Send PUT request to ${url}`,
+      `Send DELETE request to ${url}`,
+      `Send PATCH request to ${url}`,
+      `Send OPTIONS request to ${url}`,
+      `Send TRACE request to ${url}`,
+      'Verify each returns appropriate response',
+    ],
+    expectedResults: [
+      'PUT/DELETE/PATCH return 405 Method Not Allowed',
+      'OPTIONS returns allowed methods (if CORS enabled)',
+      'TRACE is disabled (security best practice)',
+      'No sensitive data exposed in error responses',
+    ],
+    priority: 'high',
+    severity: 'major',
+    tags: ['security', 'edge-case'],
+    estimatedDuration: '2 min',
+  });
+
+  tests.push({
+    id: nextId('TC-PERF'),
+    type: 'performance',
+    title: 'Edge case - Page performance under slow 3G throttling',
+    description: 'Verify page loads and is usable under slow network conditions.',
+    preconditions: ['Browser DevTools available', 'Network throttling enabled'],
+    testData: 'Network: Slow 3G (400 kbps down, 400 ms RTT)',
+    steps: [
+      `Navigate to ${url} with Slow 3G throttling`,
+      'Measure time to first meaningful paint',
+      'Measure time to interactive (TTI)',
+      'Verify page content is visible during load',
+      'Check for progressive rendering',
+      'Verify no network timeout errors',
+    ],
+    expectedResults: [
+      'Page loads within 10 seconds on slow 3G',
+      'Content is visible progressively during load',
+      'No timeout or connection errors',
+      'Page is interactive within acceptable threshold',
+    ],
+    priority: 'medium',
+    severity: 'major',
+    tags: ['performance', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-PERF'),
+    type: 'performance',
+    title: 'Edge case - Memory leak detection during long session',
+    description: 'Verify no memory leaks occur during extended page usage.',
+    preconditions: ['Browser DevTools memory profiler available'],
+    testData: 'Session duration: 5 minutes of active interaction',
+    steps: [
+      `Navigate to ${url}`,
+      'Take heap snapshot baseline',
+      'Interact with page (scroll, click, navigate) for 5 minutes',
+      'Take another heap snapshot',
+      'Compare memory usage',
+      'Check for detached DOM nodes',
+    ],
+    expectedResults: [
+      'Memory usage remains stable',
+      'No significant memory growth (> 10%)',
+      'No detached DOM nodes accumulating',
+      'Page remains responsive throughout',
+    ],
+    priority: 'low',
+    severity: 'minor',
+    tags: ['performance', 'edge-case'],
+    estimatedDuration: '8 min',
+  });
+
+  tests.push({
+    id: nextId('TC-A11Y'),
+    type: 'accessibility',
+    title: 'Edge case - Screen reader navigation compatibility',
+    description: 'Verify the page works correctly with screen readers (NVDA, VoiceOver, JAWS).',
+    preconditions: ['Screen reader is available'],
+    testData: 'Screen readers: NVDA (Windows), VoiceOver (macOS), JAWS (Windows)',
+    steps: [
+      `Navigate to ${url} with screen reader`,
+      'Navigate through all headings using H key',
+      'Navigate through all links using Tab key',
+      'Navigate through all form fields',
+      'Verify all images have alt text read aloud',
+      'Verify ARIA landmarks are announced',
+      'Verify form labels are announced',
+    ],
+    expectedResults: [
+      'All headings are announced correctly',
+      'All links have descriptive text',
+      'Form fields have associated labels announced',
+      'ARIA landmarks are properly identified',
+      'Page structure is navigable via screen reader',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['accessibility', 'edge-case'],
+    estimatedDuration: '10 min',
+  });
+
+  tests.push({
+    id: nextId('TC-A11Y'),
+    type: 'accessibility',
+    title: 'Edge case - Focus management and trap testing',
+    description: 'Verify focus is properly managed and no keyboard traps exist.',
+    preconditions: ['Page is fully loaded'],
+    testData: 'N/A',
+    steps: [
+      `Navigate to ${url}`,
+      'Tab through all interactive elements',
+      'Verify focus order follows logical flow',
+      'Check for keyboard traps (cannot tab away)',
+      'Verify focus is visible on all elements',
+      'Test Shift+Tab for reverse navigation',
+      'Verify focus returns to trigger after modal close (if any)',
+    ],
+    expectedResults: [
+      'All interactive elements are focusable',
+      'No keyboard traps exist',
+      'Focus indicator is visible',
+      'Focus order is logical',
+      'Focus management follows WAI-ARIA practices',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['accessibility', 'edge-case'],
+    estimatedDuration: '5 min',
+  });
+
+  tests.push({
+    id: nextId('TC-A11Y'),
+    type: 'accessibility',
+    title: 'Edge case - Text scaling and zoom (200%)',
+    description: 'Verify page remains usable when text is scaled to 200%.',
+    preconditions: ['Page is fully loaded'],
+    testData: 'Text scale: 200% (WCAG 1.4.4)',
+    steps: [
+      `Navigate to ${url}`,
+      'Use Ctrl+Plus to zoom to 200%',
+      'Verify text is readable without horizontal scrolling',
+      'Verify no content is cut off or overlaps',
+      'Verify all functionality still works',
+      'Check form fields are still usable',
+    ],
+    expectedResults: [
+      'Text scales to 200% without loss of content',
+      'No horizontal scrolling required',
+      'All content remains visible and readable',
+      'All functionality works at 200% zoom',
+      'No text truncation or overflow',
+    ],
+    priority: 'high',
+    severity: 'major',
+    tags: ['accessibility', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-SEC'),
+    type: 'security',
+    title: 'Edge case - Content Security Policy (CSP) validation',
+    description: 'Verify the page has proper Content Security Policy headers.',
+    preconditions: ['Page is loaded', 'Network inspection tools available'],
+    testData: 'CSP directives to check: script-src, style-src, img-src, default-src',
+    steps: [
+      `Navigate to ${url}`,
+      'Inspect response headers for Content-Security-Policy',
+      'Check for inline script restrictions',
+      'Check for external resource restrictions',
+      'Verify no unsafe-eval or unsafe-inline',
+      'Test if CSP blocks XSS attempts',
+    ],
+    expectedResults: [
+      'CSP header is present and properly configured',
+      'Inline scripts are restricted (or nonce-based)',
+      'External resources are whitelisted',
+      'No unsafe-eval or unsafe-inline',
+      'CSP prevents XSS attacks',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['security', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-SEC'),
+    type: 'security',
+    title: 'Edge case - Sensitive data exposure in JavaScript',
+    description: 'Verify no sensitive data is exposed in JavaScript variables, comments, or source code.',
+    preconditions: ['Page is loaded', 'View page source available'],
+    testData: 'Search patterns: API keys, tokens, passwords, internal URLs, emails',
+    steps: [
+      `Navigate to ${url}`,
+      'View page source',
+      'Search for API keys or tokens',
+      'Search for hardcoded passwords',
+      'Search for internal URLs or localhost references',
+      'Search for email addresses',
+      'Check JavaScript console for sensitive data',
+      'Inspect network requests for sensitive data in URLs',
+    ],
+    expectedResults: [
+      'No API keys or tokens in source code',
+      'No hardcoded passwords',
+      'No internal URLs exposed',
+      'Emails are obfuscated or not present',
+      'No sensitive data in console logs',
+      'No sensitive data in URL parameters',
+    ],
+    priority: 'high',
+    severity: 'critical',
+    tags: ['security', 'edge-case'],
+    estimatedDuration: '5 min',
+  });
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'ad-hoc',
+    title: 'Edge case - Double-click prevention on all interactive elements',
+    description: 'Verify all buttons and links prevent double-click/double-submission.',
+    preconditions: ['Page is fully loaded', 'Interactive elements exist'],
+    testData: 'N/A',
+    steps: [
+      `Navigate to ${url}`,
+      'Identify all clickable buttons and links',
+      'Double-click each element rapidly',
+      'Verify no duplicate actions occur',
+      'Check for duplicate form submissions',
+      'Verify loading states prevent re-clicks',
+    ],
+    expectedResults: [
+      'No duplicate form submissions',
+      'No duplicate page navigations',
+      'Loading states prevent re-clicks',
+      'All interactive elements handle double-click',
+    ],
+    priority: 'medium',
+    severity: 'major',
+    tags: ['functional', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'ad-hoc',
+    title: 'Edge case - Page behavior with JavaScript disabled',
+    description: 'Verify the page degrades gracefully without JavaScript.',
+    preconditions: ['JavaScript can be disabled in browser'],
+    testData: 'JavaScript: Disabled',
+    steps: [
+      'Disable JavaScript in browser settings',
+      `Navigate to ${url}`,
+      'Verify core content is still visible',
+      'Verify navigation still works',
+      'Verify forms are still submittable',
+      'Re-enable JavaScript and verify full functionality',
+    ],
+    expectedResults: [
+      'Core content is visible without JavaScript',
+      'Navigation works without JavaScript',
+      'Forms are submittable without JavaScript',
+      'No blank or broken pages',
+      'Progressive enhancement is implemented',
+    ],
+    priority: 'low',
+    severity: 'minor',
+    tags: ['ad-hoc', 'edge-case', 'accessibility'],
+    estimatedDuration: '5 min',
+  });
+
+  tests.push({
+    id: nextId('TC-FUNC'),
+    type: 'ad-hoc',
+    title: 'Edge case - Online/offline connectivity transitions',
+    description: 'Verify page handles network connectivity changes gracefully.',
+    preconditions: ['Page is loaded', 'Network can be toggled'],
+    testData: 'N/A',
+    steps: [
+      `Navigate to ${url}`,
+      'Verify page loads successfully',
+      'Simulate network disconnection',
+      'Verify offline message is displayed',
+      'Attempt interactive actions (click, form submit)',
+      'Reconnect network',
+      'Verify page recovers and syncs',
+    ],
+    expectedResults: [
+      'Offline state is detected and communicated',
+      'User receives friendly offline message',
+      'Page recovers when network is restored',
+      'No data loss during connectivity transitions',
+    ],
+    priority: 'low',
+    severity: 'minor',
+    tags: ['ad-hoc', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-COMP'),
+    type: 'compliance',
+    title: 'Edge case - Cookie consent banner behavior and persistence',
+    description: 'Verify cookie consent banner appears, persists choice, and can be modified.',
+    preconditions: ['Page is loaded', 'Cookies can be cleared'],
+    testData: 'N/A',
+    steps: [
+      `Navigate to ${url} with cleared cookies`,
+      'Verify cookie consent banner appears',
+      'Accept cookies and verify banner disappears',
+      'Reload page and verify banner does not reappear',
+      'Clear cookies and reload',
+      'Verify banner reappears',
+      'Reject non-essential cookies',
+      'Verify page still functions correctly',
+    ],
+    expectedResults: [
+      'Cookie consent banner appears on first visit',
+      'Choice is persisted in cookies',
+      'Banner does not reappear after choice',
+      'Page functions with non-essential cookies rejected',
+    ],
+    priority: 'high',
+    severity: 'major',
+    tags: ['compliance', 'edge-case'],
+    estimatedDuration: '3 min',
+  });
+
+  tests.push({
+    id: nextId('TC-UAT'),
+    type: 'uat',
+    title: 'Edge case - Cross-browser rendering consistency',
+    description: 'Verify page renders consistently across Chrome, Firefox, Safari, and Edge.',
+    preconditions: ['Access to multiple browsers'],
+    testData: 'Browsers: Chrome 120+, Firefox 120+, Safari 17+, Edge 120+',
+    steps: [
+      `Open ${url} in Chrome`,
+      'Take screenshot at 1920x1080',
+      `Open ${url} in Firefox`,
+      'Compare rendering with Chrome',
+      `Open ${url} in Safari`,
+      'Compare rendering',
+      `Open ${url} in Edge`,
+      'Compare rendering',
+      'Document any differences',
+    ],
+    expectedResults: [
+      'Layout is consistent across all browsers',
+      'Fonts render correctly in all browsers',
+      'Colors and spacing are consistent',
+      'No browser-specific layout issues',
+      'All functionality works in all browsers',
+    ],
+    priority: 'high',
+    severity: 'major',
+    tags: ['uat', 'edge-case', 'ui'],
+    estimatedDuration: '10 min',
+  });
+
+  return tests;
+}
+
+function generateCrossBrowserTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+
+  const browsers = [
+    {
+      name: 'Google Chrome',
+      version: 'latest',
+      engine: 'Blink',
+      focus: 'rendering, JavaScript, CSS, forms, media',
+    },
+    {
+      name: 'Mozilla Firefox',
+      version: 'latest',
+      engine: 'Gecko',
+      focus: 'rendering, JavaScript, CSS, forms, media',
+    },
+    {
+      name: 'Safari',
+      version: 'latest',
+      engine: 'WebKit',
+      focus: 'rendering, WebKit specific, CSS prefixes, touch events',
+    },
+    {
+      name: 'Microsoft Edge',
+      version: 'latest',
+      engine: 'Chromium (Blink)',
+      focus: 'rendering, Chromium compatibility, IE legacy considerations',
+    },
+  ];
+
+  for (const browser of browsers) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-browser - Page rendering on ${browser.name} ${browser.version}`,
+      description: `Verify that ${url} renders correctly in ${browser.name} ${browser.version} (${browser.engine}) with no visual layout differences.`,
+      preconditions: [
+        `${browser.name} ${browser.version} is installed`,
+        'Network connectivity is available',
+        'Target URL is accessible',
+      ],
+      testData: `Browser: ${browser.name} ${browser.version}\nEngine: ${browser.engine}\nURL: ${url}`,
+      steps: [
+        `Open ${browser.name} ${browser.version}`,
+        `Navigate to ${url}`,
+        'Wait for the page to fully load',
+        'Verify page layout matches the expected design',
+        'Verify all images and media load correctly',
+        'Check for rendering anomalies or layout shifts',
+        'Compare rendering with Chrome baseline if available',
+      ],
+      expectedResults: [
+        'Page layout renders correctly without distortions',
+        'All visual elements are properly positioned',
+        'No broken images or missing media',
+        'Text is rendered with correct fonts and sizes',
+        'No layout shifts during page load',
+        'Page matches baseline rendering within acceptable tolerance',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-browser', 'functional', 'regression'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-browser - JavaScript execution on ${browser.name} ${browser.version}`,
+      description: `Verify that all JavaScript on ${url} executes correctly in ${browser.name} ${browser.version} without errors.`,
+      preconditions: [
+        `${browser.name} ${browser.version} is installed`,
+        'JavaScript is enabled',
+        'Browser DevTools console is accessible',
+      ],
+      testData: `Browser: ${browser.name} ${browser.version}\nEngine: ${browser.engine}\nURL: ${url}`,
+      steps: [
+        `Open ${browser.name} ${browser.version}`,
+        'Open browser DevTools console',
+        `Navigate to ${url}`,
+        'Wait for the page to fully load',
+        'Check console for JavaScript errors or warnings',
+        'Interact with dynamic page elements (dropdowns, modals, etc.)',
+        'Verify JavaScript-driven animations work smoothly',
+        'Test any form validation logic',
+      ],
+      expectedResults: [
+        'No JavaScript errors in the browser console',
+        'No unhandled exceptions or promise rejections',
+        'Dynamic elements function correctly',
+        'Form validation logic works as expected',
+        'Animations and transitions are smooth',
+        'No JavaScript-related performance issues',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-browser', 'functional', 'regression'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-browser - Form interaction on ${browser.name} ${browser.version}`,
+      description: `Verify that all forms on ${url} are fully interactable and functional in ${browser.name} ${browser.version}.`,
+      preconditions: [
+        `${browser.name} ${browser.version} is installed`,
+        'Page forms are visible',
+      ],
+      testData: `Browser: ${browser.name} ${browser.version}\nURL: ${url}\nForms found: ${analysis.forms.length}`,
+      steps: [
+        `Open ${browser.name} ${browser.version}`,
+        `Navigate to ${url}`,
+        'Locate all forms on the page',
+        'Fill in text fields with test data',
+        'Select dropdown options',
+        'Check and uncheck checkboxes and radio buttons',
+        'Test date pickers and color pickers if present',
+        'Submit the form with valid data',
+        'Submit the form with invalid data to test validation',
+      ],
+      expectedResults: [
+        'All form fields accept input correctly',
+        'Dropdown menus function properly',
+        'Checkboxes and radio buttons toggle correctly',
+        'Form validation messages display appropriately',
+        'Form submission completes without errors',
+        'Autocomplete suggestions work if implemented',
+        'Form retains input on validation failure',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-browser', 'functional', 'regression'],
+      estimatedDuration: '4 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-browser - CSS styling consistency on ${browser.name} ${browser.version}`,
+      description: `Verify that CSS styles on ${url} are applied consistently in ${browser.name} ${browser.version}.`,
+      preconditions: [
+        `${browser.name} ${browser.version} is installed`,
+        'Page is fully loaded',
+      ],
+      testData: `Browser: ${browser.name} ${browser.version}\nEngine: ${browser.engine}\nURL: ${url}`,
+      steps: [
+        `Open ${browser.name} ${browser.version}`,
+        `Navigate to ${url}`,
+        'Inspect key CSS properties (colors, fonts, spacing)',
+        'Verify CSS Grid and Flexbox layouts render correctly',
+        'Check CSS custom properties (variables) are applied',
+        'Test CSS transitions and animations',
+        'Verify media queries trigger at correct breakpoints',
+        'Check for missing CSS prefixes that may cause issues',
+      ],
+      expectedResults: [
+        'All CSS styles are applied as designed',
+        'CSS Grid and Flexbox layouts render correctly',
+        'CSS variables are properly inherited',
+        'Transitions and animations are smooth',
+        'Media queries function at correct breakpoints',
+        'No missing vendor prefixes causing visual issues',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['cross-browser', 'functional', 'ui'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-browser - Media playback on ${browser.name} ${browser.version}`,
+      description: `Verify that all media elements (images, video, audio) on ${url} load and play correctly in ${browser.name} ${browser.version}.`,
+      preconditions: [
+        `${browser.name} ${browser.version} is installed`,
+        'Page contains media elements',
+        'Audio output is available for testing',
+      ],
+      testData: `Browser: ${browser.name} ${browser.version}\nURL: ${url}\nImages: ${analysis.images.length}`,
+      steps: [
+        `Open ${browser.name} ${browser.version}`,
+        `Navigate to ${url}`,
+        'Verify all images load and display correctly',
+        'If video elements exist, play and pause the video',
+        'If audio elements exist, play and pause the audio',
+        'Test media controls (play, pause, volume, fullscreen)',
+        'Verify responsive images load appropriate sizes',
+        'Check lazy loading behavior for below-fold media',
+      ],
+      expectedResults: [
+        'All images load without broken placeholders',
+        'Video elements play and pause correctly',
+        'Audio elements play and pause correctly',
+        'Media controls are functional',
+        'Responsive images adapt to viewport',
+        'Lazy loading triggers for off-screen media',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['cross-browser', 'functional'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-browser - Console errors check on ${browser.name} ${browser.version}`,
+      description: `Verify that ${url} produces no console errors in ${browser.name} ${browser.version} during normal page usage.`,
+      preconditions: [
+        `${browser.name} ${browser.version} is installed`,
+        'Browser DevTools console is accessible',
+      ],
+      testData: `Browser: ${browser.name} ${browser.version}\nURL: ${url}`,
+      steps: [
+        `Open ${browser.name} ${browser.version}`,
+        'Clear browser console',
+        `Navigate to ${url}`,
+        'Wait for full page load',
+        'Record all console errors, warnings, and info messages',
+        'Interact with page elements (click buttons, open menus)',
+        'Navigate through internal links and back',
+        'Review console output for issues',
+      ],
+      expectedResults: [
+        'No JavaScript errors in console',
+        'No network-related errors (4xx, 5xx)',
+        'No mixed content warnings',
+        'Warnings are acceptable (deprecation notices, etc.)',
+        'No uncaught promise rejections',
+        'Console is clean during normal usage flow',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-browser', 'functional', 'regression'],
+      estimatedDuration: '2 min',
+    });
+  }
+
+  return tests;
+}
+
+function generateCrossDeviceTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+
+  const devices = [
+    {
+      name: 'iPhone 15 Pro',
+      viewport: '393x852',
+      os: 'iOS 17',
+      browser: 'Safari',
+    },
+    {
+      name: 'iPhone 14',
+      viewport: '390x844',
+      os: 'iOS 16',
+      browser: 'Safari',
+    },
+    {
+      name: 'Samsung Galaxy S24',
+      viewport: '360x780',
+      os: 'Android 14',
+      browser: 'Chrome',
+    },
+    {
+      name: 'Google Pixel 8',
+      viewport: '412x915',
+      os: 'Android 14',
+      browser: 'Chrome',
+    },
+    {
+      name: 'iPad Pro 12.9"',
+      viewport: '1024x1366',
+      os: 'iPadOS 17',
+      browser: 'Safari',
+    },
+    {
+      name: 'iPad Air',
+      viewport: '820x1180',
+      os: 'iPadOS 16',
+      browser: 'Safari',
+    },
+    {
+      name: 'Samsung Galaxy Tab S9',
+      viewport: '800x1280',
+      os: 'Android 14',
+      browser: 'Chrome',
+    },
+  ];
+
+  for (const device of devices) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-device - Viewport rendering on ${device.name} (${device.viewport})`,
+      description: `Verify that ${url} renders correctly within the ${device.viewport} viewport on ${device.name} (${device.os}, ${device.browser}).`,
+      preconditions: [
+        `${device.name} or emulator is available`,
+        `${device.browser} browser is installed`,
+        'Network connectivity is available',
+      ],
+      testData: `Device: ${device.name}\nViewport: ${device.viewport}\nOS: ${device.os}\nBrowser: ${device.browser}\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${device.viewport}`,
+        `Set user agent to ${device.name} (${device.os})`,
+        `Navigate to ${url}`,
+        'Wait for the page to fully load',
+        'Verify the layout adapts to the viewport',
+        'Verify no horizontal scrollbar appears',
+        'Verify all content is visible within the viewport',
+        'Check that text is readable without zooming',
+        'Verify touch-friendly element sizing',
+      ],
+      expectedResults: [
+        'Page layout adapts correctly to the viewport',
+        'No horizontal scrollbar appears',
+        'All content is visible without horizontal scrolling',
+        'Text is readable at native resolution without zooming',
+        'Interactive elements are touch-friendly (min 44x44px)',
+        'No overlapping or cut-off elements',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-device', 'functional', 'ui', 'regression'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-device - Touch interactions on ${device.name}`,
+      description: `Verify that all touch gestures and interactions work correctly on ${device.name} (${device.os}) at ${url}.`,
+      preconditions: [
+        `${device.name} or emulator is available`,
+        'Touch input is enabled',
+        'Page contains interactive elements',
+      ],
+      testData: `Device: ${device.name}\nViewport: ${device.viewport}\nOS: ${device.os}\nURL: ${url}`,
+      steps: [
+        `Set device emulation to ${device.name}`,
+        `Navigate to ${url}`,
+        'Tap on navigation links and buttons',
+        'Swipe horizontally on carousels or sliders if present',
+        'Swipe vertically to scroll the page',
+        'Long-press on elements that support it',
+        'Pinch to zoom on content areas',
+        'Double-tap to zoom if supported',
+        'Test pull-to-refresh if implemented',
+      ],
+      expectedResults: [
+        'Tap interactions trigger the expected actions',
+        'Horizontal swipe gestures work on carousels',
+        'Vertical scrolling is smooth and responsive',
+        'Long-press triggers context menus where expected',
+        'Pinch-to-zoom functions correctly',
+        'Double-tap zoom works on content areas',
+        'No accidental tap targets or ghost clicks',
+        'Touch feedback (ripple, highlight) is visible',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-device', 'functional', 'ui'],
+      estimatedDuration: '4 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-device - Responsive layout on ${device.name} (${device.viewport})`,
+      description: `Verify that the responsive layout of ${url} adjusts properly at the ${device.viewport} breakpoint on ${device.name}.`,
+      preconditions: [
+        `${device.name} or emulator is available`,
+        'Page is fully loaded',
+      ],
+      testData: `Device: ${device.name}\nViewport: ${device.viewport}\nOS: ${device.os}\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${device.viewport}`,
+        `Navigate to ${url}`,
+        'Verify navigation adapts (hamburger menu on small screens)',
+        'Verify content columns stack vertically if needed',
+        'Verify images scale appropriately',
+        'Verify tables are horizontally scrollable',
+        'Verify footer content stacks correctly',
+        'Check that the correct breakpoint is triggered',
+      ],
+      expectedResults: [
+        'Navigation switches to mobile-friendly pattern',
+        'Multi-column layouts stack appropriately',
+        'Images scale down proportionally',
+        'Tables are scrollable without breaking layout',
+        'Footer content stacks vertically on narrow screens',
+        'Correct responsive breakpoint is active',
+        'No content is hidden or inaccessible',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['cross-device', 'functional', 'ui', 'regression'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-device - Font scaling on ${device.name} (${device.os})`,
+      description: `Verify that text on ${url} remains readable and properly scaled on ${device.name} at various system font size settings.`,
+      preconditions: [
+        `${device.name} or emulator is available`,
+        'Device system font size can be adjusted',
+      ],
+      testData: `Device: ${device.name}\nOS: ${device.os}\nViewport: ${device.viewport}\nURL: ${url}`,
+      steps: [
+        `Set device to default font size`,
+        `Navigate to ${url}`,
+        'Verify text is readable at default font size',
+        'Increase system font size to large',
+        'Reload the page and verify text scales up',
+        'Verify no text is clipped or overflows containers',
+        'Verify navigation and buttons remain functional',
+        'Reset font size to default and verify normalization',
+      ],
+      expectedResults: [
+        'Text is readable at default font size',
+        'Text scales up when system font size increases',
+        'No text clipping or overflow at larger font sizes',
+        'Layout remains intact with larger text',
+        'Navigation remains functional at all font sizes',
+        'Form fields accommodate larger text',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['cross-device', 'functional', 'accessibility'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Cross-device - Navigation patterns on ${device.name} (${device.viewport})`,
+      description: `Verify that navigation patterns on ${url} are appropriate and functional for ${device.name} at ${device.viewport}.`,
+      preconditions: [
+        `${device.name} or emulator is available`,
+        'Navigation elements are present on the page',
+      ],
+      testData: `Device: ${device.name}\nViewport: ${device.viewport}\nOS: ${device.os}\nBrowser: ${device.browser}\nURL: ${url}`,
+      steps: [
+        `Set device emulation to ${device.name}`,
+        `Navigate to ${url}`,
+        'Locate the primary navigation element',
+        'Open mobile menu (hamburger) if on narrow viewport',
+        'Tap on navigation links and verify destinations',
+        'Close the mobile menu',
+        'Scroll down and verify sticky/fixed navigation behavior',
+        'Use back gesture/button to return to the page',
+        'Verify breadcrumb navigation if present',
+      ],
+      expectedResults: [
+        'Mobile menu opens and closes correctly',
+        'Navigation links are touch-friendly and tappable',
+        'Navigation leads to correct destinations',
+        'Sticky/fixed navigation remains accessible while scrolling',
+        'Back gesture returns to the previous page',
+        'Breadcrumb navigation is functional and visible',
+        'Active/current page is indicated in navigation',
+      ],
+      priority: 'high',
+      severity: 'major',
+      tags: ['cross-device', 'functional', 'ui'],
+      estimatedDuration: '3 min',
+    });
+  }
+
+  return tests;
+}
+
+function generateResolutionTests(
+  analysis: PageAnalysisResult,
+  insights: AnalyzedInsights,
+): TestCase[] {
+  const tests: TestCase[] = [];
+  const url = analysis.url;
+
+  const resolutions = [
+    { width: 3840, height: 2160, label: '4K UHD' },
+    { width: 2560, height: 1440, label: 'QHD/2K' },
+    { width: 1920, height: 1080, label: 'Full HD' },
+    { width: 1366, height: 768, label: 'HD Laptop' },
+    { width: 1280, height: 720, label: 'HD' },
+    { width: 1024, height: 768, label: 'XGA/Tablet landscape' },
+    { width: 768, height: 1024, label: 'Tablet portrait' },
+    { width: 375, height: 812, label: 'Mobile portrait' },
+  ];
+
+  for (const res of resolutions) {
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Resolution - Layout integrity at ${res.width}x${res.height} (${res.label})`,
+      description: `Verify that ${url} maintains layout integrity at ${res.width}x${res.height} (${res.label}) resolution.`,
+      preconditions: [
+        'Browser is available with resolution control',
+        'Network connectivity is available',
+      ],
+      testData: `Resolution: ${res.width}x${res.height} (${res.label})\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${res.width}x${res.height}`,
+        `Navigate to ${url}`,
+        'Wait for the page to fully load',
+        'Verify the overall page layout is intact',
+        'Verify header and footer span the correct width',
+        'Verify content sections are properly contained',
+        'Check that no elements overflow the viewport',
+        'Verify images and media scale correctly',
+      ],
+      expectedResults: [
+        'Page layout is properly structured at this resolution',
+        'Header and footer render correctly at full width',
+        'Content sections are contained within the viewport',
+        'No elements overflow or cause horizontal scrolling',
+        'Images and media scale proportionally',
+        'Text columns are properly sized for the viewport',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['resolution', 'functional', 'ui', 'regression'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Resolution - No horizontal scroll at ${res.width}x${res.height} (${res.label})`,
+      description: `Verify that ${url} does not produce a horizontal scrollbar at ${res.width}x${res.height} (${res.label}) resolution.`,
+      preconditions: [
+        'Browser is available with resolution control',
+      ],
+      testData: `Resolution: ${res.width}x${res.height} (${res.label})\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${res.width}x${res.height}`,
+        `Navigate to ${url}`,
+        'Wait for the page to fully load',
+        'Check document.documentElement.scrollWidth vs clientWidth',
+        'Verify no horizontal scrollbar appears',
+        'Scroll horizontally if scrollbar exists and note overflow elements',
+        'Check for elements with fixed widths exceeding viewport',
+      ],
+      expectedResults: [
+        'No horizontal scrollbar appears',
+        'Document scrollWidth does not exceed clientWidth',
+        'All elements fit within the viewport width',
+        'No text or content is clipped horizontally',
+        'Tables are contained or scrollable within their container',
+        'No fixed-width elements break the layout',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['resolution', 'functional', 'ui'],
+      estimatedDuration: '2 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Resolution - Content visibility at ${res.width}x${res.height} (${res.label})`,
+      description: `Verify that all important content on ${url} is visible and accessible at ${res.width}x${res.height} (${res.label}) resolution.`,
+      preconditions: [
+        'Browser is available with resolution control',
+        'Page is fully loaded',
+      ],
+      testData: `Resolution: ${res.width}x${res.height} (${res.label})\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${res.width}x${res.height}`,
+        `Navigate to ${url}`,
+        'Verify the page title and heading are visible',
+        'Verify main content is visible above the fold',
+        'Scroll down and verify all content sections load',
+        'Verify images are visible and not hidden',
+        'Check that no content is hidden behind sticky elements',
+        'Verify all text is visible and not truncated',
+      ],
+      expectedResults: [
+        'Page title and primary heading are visible',
+        'Main content is accessible above the fold',
+        'All content sections are visible when scrolled to',
+        'All images render and are visible',
+        'No content is hidden behind sticky headers or footers',
+        'All text is visible without truncation',
+      ],
+      priority: 'high',
+      severity: 'critical',
+      tags: ['resolution', 'functional', 'ui'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Resolution - Text readability at ${res.width}x${res.height} (${res.label})`,
+      description: `Verify that all text on ${url} is readable and properly sized at ${res.width}x${res.height} (${res.label}) resolution.`,
+      preconditions: [
+        'Browser is available with resolution control',
+        'Page is fully loaded',
+      ],
+      testData: `Resolution: ${res.width}x${res.height} (${res.label})\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${res.width}x${res.height}`,
+        `Navigate to ${url}`,
+        'Verify body text font size is at least 14px',
+        'Verify heading sizes are proportional to viewport',
+        'Check line height and letter spacing are comfortable',
+        'Verify text contrast against background',
+        'Check that text is not overlapping or cut off',
+        'Verify link text is distinguishable from body text',
+      ],
+      expectedResults: [
+        'Body text is at least 14px for readability',
+        'Heading sizes are proportional and hierarchical',
+        'Line height is between 1.4 and 1.8 for comfortable reading',
+        'Text contrast meets WCAG AA standards',
+        'No text overlapping or being cut off',
+        'Link text is visually distinguishable',
+        'Text scales appropriately for the resolution',
+      ],
+      priority: 'medium',
+      severity: 'major',
+      tags: ['resolution', 'functional', 'ui', 'accessibility'],
+      estimatedDuration: '3 min',
+    });
+
+    tests.push({
+      id: nextId('TC-FUNC'),
+      type: 'functional',
+      title: `Resolution - Navigation usability at ${res.width}x${res.height} (${res.label})`,
+      description: `Verify that navigation elements on ${url} are usable and accessible at ${res.width}x${res.height} (${res.label}) resolution.`,
+      preconditions: [
+        'Browser is available with resolution control',
+        'Navigation elements are present on the page',
+      ],
+      testData: `Resolution: ${res.width}x${res.height} (${res.label})\nURL: ${url}`,
+      steps: [
+        `Set browser viewport to ${res.width}x${res.height}`,
+        `Navigate to ${url}`,
+        'Verify navigation is visible and accessible',
+        'Verify navigation links are tappable/clickable',
+        'If mobile menu exists, verify it opens and closes',
+        'Test that navigation links lead to correct pages',
+        'Verify search functionality is accessible if present',
+        'Check that navigation does not overlap content',
+      ],
+      expectedResults: [
+        'Navigation is visible and accessible',
+        'All navigation links are within the viewport or accessible via menu',
+        'Mobile hamburger menu works if applicable',
+        'Navigation links are large enough for touch interaction',
+        'Search bar is accessible and functional',
+        'Navigation does not overlap or obscure content',
+        'Active page is indicated in navigation',
+      ],
+      priority: 'high',
+      severity: 'major',
+      tags: ['resolution', 'functional', 'ui'],
+      estimatedDuration: '3 min',
+    });
+  }
 
   return tests;
 }

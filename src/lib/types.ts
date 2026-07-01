@@ -258,6 +258,7 @@ export interface ExportFiles {
   markdown: { filename: string; content: string }[];
   json: { filename: string; content: string }[];
   playwright: { filename: string; content: string }[];
+  html: { filename: string; content: string }[];
 }
 
 export interface AnalyzeResponse {
@@ -266,4 +267,28 @@ export interface AnalyzeResponse {
   analysis?: PageAnalysisResult;
   artifacts?: GeneratedArtifacts;
   exports?: ExportFiles;
+  accessibilityErrors?: AccessibilityError[];
+  issues?: Issue[];
+}
+
+export interface AccessibilityError {
+  severity: 'critical' | 'warning' | 'info';
+  category: string;
+  message: string;
+  element?: string;
+  wcag?: string;
+}
+
+export interface Issue {
+  id: string;
+  title: string;
+  description: string;
+  severity: 'critical' | 'major' | 'minor';
+  category: string;
+  wcag?: string;
+  steps: string[];
+  expectedResult: string;
+  actualResult: string;
+  affectedElement?: string;
+  recommendation: string;
 }

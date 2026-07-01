@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import type { PageAnalysisResult, TestCase, TestScenario, TestPlan, RtmEntry, ExportFiles } from '@/lib/types';
+import type { PageAnalysisResult, TestCase, TestScenario, TestPlan, RtmEntry, ExportFiles, AccessibilityError, Issue } from '@/lib/types';
 import Header from '@/components/Header';
 import UrlInput from '@/components/UrlInput';
 import LoadingOverlay from '@/components/LoadingOverlay';
@@ -8,6 +8,8 @@ import ResultsDashboard from '@/components/ResultsDashboard';
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [accessibilityErrors, setAccessibilityErrors] = useState<AccessibilityError[]>([]);
+  const [issues, setIssues] = useState<Issue[]>([]);
   const [results, setResults] = useState<{
     analysis: PageAnalysisResult;
     testCases: TestCase[];
@@ -20,6 +22,8 @@ export default function Home() {
   const handleAnalyze = useCallback(async (url: string) => {
     setIsLoading(true);
     setError(null);
+    setAccessibilityErrors([]);
+    setIssues([]);
     setResults(null);
 
     try {
@@ -35,6 +39,14 @@ export default function Home() {
         setError(data.error || 'Analysis failed. Please try again.');
         setIsLoading(false);
         return;
+      }
+
+      if (data.accessibilityErrors && data.accessibilityErrors.length > 0) {
+        setAccessibilityErrors(data.accessibilityErrors);
+      }
+
+      if (data.issues && data.issues.length > 0) {
+        setIssues(data.issues);
       }
 
       setResults({
@@ -59,6 +71,13 @@ export default function Home() {
   const dismissError = useCallback(() => {
     setError(null);
   }, []);
+
+  const dismissA11yErrors = useCallback(() => {
+    setAccessibilityErrors([]);
+  }, []);
+
+  const criticalA11yErrors = accessibilityErrors.filter((e) => e.severity === 'critical');
+  const warningA11yErrors = accessibilityErrors.filter((e) => e.severity === 'warning');
 
   return (
     <div className="app">
@@ -98,6 +117,66 @@ export default function Home() {
           </div>
         )}
 
+        {accessibilityErrors.length > 0 && !isLoading && (
+          <div className="a11y-banner" role="alert">
+            <div className="a11y-banner-header">
+              <div className="a11y-banner-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4" />
+                  <path d="M12 16h.01" />
+                </svg>
+              </div>
+              <div className="a11y-banner-title">
+                <span>Website Accessibility Issues Detected</span>
+                <span className="a11y-banner-count">
+                  {criticalA11yErrors.length} critical, {warningA11yErrors.length} warnings
+                </span>
+              </div>
+              <button className="a11y-banner-dismiss" onClick={dismissA11yErrors} type="button" aria-label="Dismiss accessibility warnings">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="a11y-banner-details">
+              {criticalA11yErrors.length > 0 && (
+                <div className="a11y-error-group critical">
+                  <strong>Critical Issues:</strong>
+                  <ul>
+                    {criticalA11yErrors.slice(0, 5).map((err, i) => (
+                      <li key={i}>
+                        <span className="a11y-error-category">[{err.category}]</span> {err.message}
+                        {err.wcag && <span className="a11y-wcag">WCAG {err.wcag}</span>}
+                      </li>
+                    ))}
+                    {criticalA11yErrors.length > 5 && (
+                      <li className="a11y-more">+{criticalA11yErrors.length - 5} more critical issues</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              {warningA11yErrors.length > 0 && (
+                <div className="a11y-error-group warning">
+                  <strong>Warnings:</strong>
+                  <ul>
+                    {warningA11yErrors.slice(0, 3).map((err, i) => (
+                      <li key={i}>
+                        <span className="a11y-error-category">[{err.category}]</span> {err.message}
+                        {err.wcag && <span className="a11y-wcag">WCAG {err.wcag}</span>}
+                      </li>
+                    ))}
+                    {warningA11yErrors.length > 3 && (
+                      <li className="a11y-more">+{warningA11yErrors.length - 3} more warnings</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {isLoading && <LoadingOverlay />}
 
         {results && !isLoading && (
@@ -108,6 +187,8 @@ export default function Home() {
             testPlan={results.testPlan}
             rtm={results.rtm}
             exports={results.exports}
+            accessibilityErrors={accessibilityErrors}
+            issues={issues}
           />
         )}
 

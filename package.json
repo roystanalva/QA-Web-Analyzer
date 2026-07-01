@@ -1,15 +1,17 @@
 {
   "name": "qa-web-analyzer",
   "version": "1.0.0",
-  "description": "Production-ready QA Web Analyzer - generates test cases, scenarios, plans, RTM, and Playwright scripts from any webpage URL",
+  "description": "QA Web Analyzer Desktop - analyze any webpage & generate production-ready QA artifacts",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "electron": "electron .",
+    "electron:build": "next build && electron-builder",
     "lint": "next lint",
-    "test": "jest --passWithNoTests",
-    "postinstall": "npx playwright install chromium --with-deps 2>nul || echo 'Skipping Playwright browser install - run manually if needed: npx playwright install chromium'"
+    "test": "jest --passWithNoTests"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
@@ -19,14 +21,37 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.0",
-    "@types/archiver": "^6.0.0",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.11.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "archiver": "^7.0.0",
+    "electron": "^42.0.1",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.qa-web-analyzer.app",
+    "productName": "QA Web Analyzer",
+    "files": [
+      "electron/**/*",
+      ".next/**/*",
+      "next.config.js",
+      "package.json",
+      "public/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "portable"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }
